@@ -2,11 +2,11 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Terrain OC">
 <link rel="apple-touch-icon" href="icon.png">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Observations Terrain</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap');
@@ -66,6 +66,7 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 #copy-zone{margin-top:14px;display:none;}
 #copy-box{width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--s2);border:1px solid var(--b2);border-radius:9px;color:var(--ow);padding:10px;resize:none;}
 .copy-label{font-size:11px;color:var(--mu);margin-bottom:6px;}
+.saved-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr);margin-left:6px;vertical-align:middle;}
 </style>
 </head>
 <body>
@@ -134,17 +135,48 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
       </div>
       <div id="thl"></div>
     </div>
-    <p class="note">Donnees conservees pendant la session</p>
+    <p class="note">Donnees sauvegardees automatiquement <span class="saved-dot"></span></p>
   </div>
 </div>
 
 <script>
 var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
-var mags=['Montgeron','Vitry','Quincy','Fresnes'];
-var themes=['Accueil client','Facing montures','Depistage audio','Rappels devis','Ventes NDV','Formations','Proprete rangement','Organisation equipe'];
-var obs=[];
-var locked={};
-var tone=null;
+var KEY='oc_terrain_v1';
+
+var DEFAULT_MAGS=['Montgeron','Vitry','Quincy','Fresnes'];
+var DEFAULT_THEMES=['Accueil client','Facing montures','Depistage audio','Rappels devis','Ventes NDV','Formations','Proprete rangement','Organisation equipe'];
+
+var mags, themes, obs, locked, tone;
+
+function saveAll(){
+  try{
+    localStorage.setItem(KEY, JSON.stringify({mags:mags,themes:themes,obs:obs,locked:locked}));
+  }catch(e){}
+}
+
+function loadAll(){
+  try{
+    var raw=localStorage.getItem(KEY);
+    if(raw){
+      var d=JSON.parse(raw);
+      mags=d.mags||DEFAULT_MAGS;
+      themes=d.themes||DEFAULT_THEMES;
+      obs=d.obs||[];
+      locked=d.locked||{};
+    } else {
+      mags=DEFAULT_MAGS.slice();
+      themes=DEFAULT_THEMES.slice();
+      obs=[];
+      locked={};
+    }
+  }catch(e){
+    mags=DEFAULT_MAGS.slice();
+    themes=DEFAULT_THEMES.slice();
+    obs=[];
+    locked={};
+  }
+  tone=null;
+}
 
 function dk(){var d=new Date();return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();}
 function dl(){var d=new Date();return JOURS[d.getDay()]+' '+d.getDate()+'/'+(d.getMonth()+1);}
@@ -188,6 +220,7 @@ function add(){
   var tx=document.getElementById('txt').value.trim();
   if(!m||!th||!tx||!tone){alert('Remplis tous les champs et choisis positif ou a ameliorer.');return;}
   obs.push({m:m,th:th,tx:tx,t:tone,d:dk(),dl:dl(),id:Date.now()});
+  saveAll();
   document.getElementById('sel-mag').value='';
   document.getElementById('sel-th').value='';
   document.getElementById('txt').value='';
@@ -198,7 +231,7 @@ function add(){
 function del(id){
   if(isLocked())return;
   obs=obs.filter(function(o){return o.id!==id;});
-  drawToday();updVZ();
+  saveAll();drawToday();updVZ();
 }
 
 function drawToday(){
@@ -223,7 +256,7 @@ function valDay(){
   if(!today.length){alert('Aucune observation a valider.');return;}
   if(confirm('Valider et figer les '+today.length+' observation'+(today.length>1?'s':'')+' ?')){
     locked[dk()]=true;
-    drawToday();updVZ();
+    saveAll();drawToday();updVZ();
   }
 }
 
@@ -278,6 +311,7 @@ function copyText(){
 function reset(){
   if(confirm('Effacer toutes les observations de la semaine ?')){
     obs=[];locked={};
+    saveAll();
     document.getElementById('copy-zone').style.display='none';
     drawToday();updVZ();
   }
@@ -297,11 +331,12 @@ function drawTHL(){
   for(var i=0;i<themes.length;i++) h+='<div class="pi"><span>'+themes[i]+'</span><button class="xb" style="position:relative;top:auto;right:auto;padding:4px;" onclick="delTH('+i+')">&#215;</button></div>';
   el.innerHTML=h;
 }
-function addM(){var v=document.getElementById('nm').value.trim();if(!v||mags.indexOf(v)>=0)return;mags.push(v);document.getElementById('nm').value='';fillSel('sel-mag',mags);drawML();}
-function delM(i){mags.splice(i,1);fillSel('sel-mag',mags);drawML();}
-function addTh(){var v=document.getElementById('nt').value.trim();if(!v||themes.indexOf(v)>=0)return;themes.push(v);document.getElementById('nt').value='';fillSel('sel-th',themes);drawTHL();}
-function delTH(i){themes.splice(i,1);fillSel('sel-th',themes);drawTHL();}
+function addM(){var v=document.getElementById('nm').value.trim();if(!v||mags.indexOf(v)>=0)return;mags.push(v);document.getElementById('nm').value='';saveAll();fillSel('sel-mag',mags);drawML();}
+function delM(i){mags.splice(i,1);saveAll();fillSel('sel-mag',mags);drawML();}
+function addTh(){var v=document.getElementById('nt').value.trim();if(!v||themes.indexOf(v)>=0)return;themes.push(v);document.getElementById('nt').value='';saveAll();fillSel('sel-th',themes);drawTHL();}
+function delTH(i){themes.splice(i,1);saveAll();fillSel('sel-th',themes);drawTHL();}
 
+loadAll();
 fillSel('sel-mag',mags);
 fillSel('sel-th',themes);
 drawToday();
