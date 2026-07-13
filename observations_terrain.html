@@ -63,13 +63,17 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 .psec{margin-bottom:18px;}
 .note{font-size:11px;color:var(--mu);text-align:center;margin-top:10px;}
 .ginfo{font-size:11px;color:var(--mu);text-align:center;margin-bottom:10px;line-height:1.5;}
-#copy-zone{margin-top:14px;display:none;}
+#review-zone{margin-top:14px;}
 #copy-box{width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--s2);border:1px solid var(--b2);border-radius:9px;color:var(--ow);padding:10px;resize:none;}
 .copy-label{font-size:11px;color:var(--mu);margin-bottom:6px;}
 .saved-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr);margin-left:6px;vertical-align:middle;}
 </style>
 </head>
 <body>
+<div id="update-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#0D0D0D;border-bottom:2px solid var(--red);padding:10px 16px;align-items:center;gap:10px;font-family:'Barlow',sans-serif">
+  <span style="flex:1;color:#F0EDE6;font-size:13px">🔄 Nouvelle version de l'application disponible</span>
+  <button onclick="applyUpdate()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;font-family:'Barlow',sans-serif;cursor:pointer;white-space:nowrap">Mettre à jour</button>
+</div>
 <h1>Observations <span>Terrain</span></h1>
 <p class="sub">Saisie des visites magasins</p>
 <div class="card">
@@ -106,12 +110,24 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
     <div class="lbl">Recap semaine</div>
     <div id="wsum"><div class="empty">Aucune observation cette semaine</div></div>
     <div class="sep"></div>
-    <div class="ginfo">Copie le texte genere et colle-le dans Claude</div>
-    <button class="btn btn-o" onclick="gen()">Preparer le message pour Claude</button>
-    <div id="copy-zone">
-      <div class="copy-label">Copie ce texte et colle-le dans Claude :</div>
-      <textarea id="copy-box" readonly></textarea>
-      <button class="btn btn-r" style="margin-top:8px" onclick="copyText()">Copier</button>
+    <div class="ginfo">Genere la com de la semaine, tu pourras la relire et ajouter des infos avant l'envoi</div>
+    <button class="btn btn-o" id="genbtn" onclick="gen()">Preparer la communication</button>
+    <div id="loadzone" style="display:none;text-align:center;font-size:12px;color:var(--mu);padding:14px 0">Generation en cours...</div>
+    <div id="review-zone" style="display:none">
+      <div class="copy-label">Slack 1</div>
+      <textarea id="rv-slack1" style="height:100px"></textarea>
+      <div class="copy-label">Slack 2</div>
+      <textarea id="rv-slack2" style="height:100px"></textarea>
+      <div class="copy-label">Slack 3</div>
+      <textarea id="rv-slack3" style="height:100px"></textarea>
+      <div class="copy-label">Message general</div>
+      <textarea id="rv-general" style="height:100px"></textarea>
+      <div class="copy-label">Elements pour le mail</div>
+      <textarea id="rv-mail" style="height:100px"></textarea>
+      <div class="copy-label">Infos supplementaires (chiffres, ton, contexte...)</div>
+      <textarea id="rv-infos" style="height:80px" placeholder="A completer avant l'envoi..."></textarea>
+      <button class="btn btn-r" style="margin-top:8px" onclick="sendObs()">Envoyer par email</button>
+      <div id="sendmsg" style="display:none;font-size:12px;text-align:center;margin-top:8px"></div>
     </div>
     <div class="sep"></div>
     <button class="btn btn-mu" onclick="reset()">Nouvelle semaine — effacer tout</button>
@@ -142,6 +158,62 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 <script>
 var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 var KEY='oc_terrain_v1';
+var RELAY='https://zimbra-relay.oli-baroukh.workers.dev';
+var STORE_TOKEN='OC-bilan-store-2026';
+var APP_VERSION='2026.07.13-1';
+
+function checkForUpdate(){
+  var updatePending=localStorage.getItem('obs_update_pending');
+  if(updatePending){
+    localStorage.removeItem('obs_update_pending');
+    localStorage.setItem('obs_app_version',APP_VERSION);
+    return;
+  }
+  var storedVersion=localStorage.getItem('obs_app_version');
+  if(storedVersion&&storedVersion!==APP_VERSION){
+    document.getElementById('update-banner').style.display='flex';
+  }else{
+    localStorage.setItem('obs_app_version',APP_VERSION);
+  }
+}
+
+function applyUpdate(){
+  var btn=document.querySelector('#update-banner button');
+  if(btn){btn.textContent='Mise a jour...';btn.disabled=true;}
+  localStorage.setItem('obs_update_pending','1');
+
+  var cleanup=Promise.resolve();
+  if('serviceWorker' in navigator){
+    cleanup=navigator.serviceWorker.getRegistrations().then(function(regs){
+      return Promise.all(regs.map(function(reg){return reg.unregister();}));
+    }).catch(function(){});
+  }
+  cleanup.then(function(){
+    if('caches' in window){
+      return caches.keys().then(function(keys){
+        return Promise.all(keys.map(function(key){return caches.delete(key);}));
+      }).catch(function(){});
+    }
+  }).then(function(){
+    window.location.reload();
+  });
+}
+
+function registerServiceWorker(){
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      reg.addEventListener('updatefound',function(){
+        var newWorker=reg.installing;
+        if(newWorker){
+          newWorker.addEventListener('statechange',function(){
+            if(newWorker.state==='activated'){checkForUpdate();}
+          });
+        }
+      });
+      setInterval(function(){reg.update();},5*60*1000);
+    }).catch(function(err){console.warn('Service Worker non enregistre:',err);});
+  }
+}
 
 var DEFAULT_MAGS=['Montgeron','Vitry','Quincy','Fresnes'];
 var DEFAULT_THEMES=['Accueil client','Facing montures','Depistage audio','Rappels devis','Ventes NDV','Formations','Proprete rangement','Organisation equipe'];
@@ -291,28 +363,72 @@ function drawWeek(){
 
 function gen(){
   if(!obs.length){alert('Aucune observation a envoyer.');return;}
-  var lines=[];
-  for(var i=0;i<obs.length;i++){
-    var o=obs[i];
-    lines.push('['+o.dl+']['+o.m+']['+o.th+']['+(o.t==='p'?'+':'-')+'] '+o.tx);
-  }
-  var msg='Voici mes observations terrain de la semaine :\n\n'+lines.join('\n')+'\n\nA partir de ces observations, propose-moi la communication hebdomadaire complete : les 3 messages Slack (emojis dans le titre, info courte, conclusion tres courte), le message general (independant des Slack, avec emojis), et les elements terrain a integrer dans le mail. Je completerai ensuite avec le ton general, les chiffres et les infos supplementaires.';
-  document.getElementById('copy-box').value=msg;
-  document.getElementById('copy-zone').style.display='block';
+  document.getElementById('genbtn').style.display='none';
+  document.getElementById('loadzone').style.display='block';
+  document.getElementById('review-zone').style.display='none';
+  document.getElementById('sendmsg').style.display='none';
+
+  fetch(RELAY+'/obs-generate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
+    body:JSON.stringify({obs:obs})
+  }).then(function(r){return r.text();}).then(function(rawText){
+    var data;
+    try{data=JSON.parse(rawText);}catch(e){data={error:rawText};}
+    document.getElementById('loadzone').style.display='none';
+    document.getElementById('genbtn').style.display='block';
+    if(data.error){alert('Erreur : '+data.error);return;}
+    var b=data.blocks;
+    document.getElementById('rv-slack1').value=(b.slack1&&b.slack1.titre?b.slack1.titre+'\n\n':'')+(b.slack1&&b.slack1.contenu?b.slack1.contenu+'\n\n':'')+(b.slack1&&b.slack1.conclusion?b.slack1.conclusion:'');
+    document.getElementById('rv-slack2').value=(b.slack2&&b.slack2.titre?b.slack2.titre+'\n\n':'')+(b.slack2&&b.slack2.contenu?b.slack2.contenu+'\n\n':'')+(b.slack2&&b.slack2.conclusion?b.slack2.conclusion:'');
+    document.getElementById('rv-slack3').value=(b.slack3&&b.slack3.titre?b.slack3.titre+'\n\n':'')+(b.slack3&&b.slack3.contenu?b.slack3.contenu+'\n\n':'')+(b.slack3&&b.slack3.conclusion?b.slack3.conclusion:'');
+    document.getElementById('rv-general').value=b.message_general||'';
+    document.getElementById('rv-mail').value=b.elements_mail||'';
+    document.getElementById('rv-infos').value='';
+    document.getElementById('review-zone').style.display='block';
+  }).catch(function(e){
+    document.getElementById('loadzone').style.display='none';
+    document.getElementById('genbtn').style.display='block';
+    alert('Erreur reseau : '+e.message);
+  });
 }
 
-function copyText(){
-  var box=document.getElementById('copy-box');
-  box.select();
-  try{document.execCommand('copy');alert('Copie ! Colle-le dans Claude.');}
-  catch(e){alert('Selectionne le texte manuellement et copie-le.');}
+function sendObs(){
+  var payload={
+    slack1:document.getElementById('rv-slack1').value,
+    slack2:document.getElementById('rv-slack2').value,
+    slack3:document.getElementById('rv-slack3').value,
+    messageGeneral:document.getElementById('rv-general').value,
+    elementsMail:document.getElementById('rv-mail').value,
+    infosSupplementaires:document.getElementById('rv-infos').value
+  };
+  var msgEl=document.getElementById('sendmsg');
+  msgEl.style.display='block';
+  msgEl.style.color='var(--mu)';
+  msgEl.textContent='Envoi en cours...';
+
+  fetch(RELAY+'/obs-send',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
+    body:JSON.stringify(payload)
+  }).then(function(r){return r.text();}).then(function(rawText){
+    var data;
+    try{data=JSON.parse(rawText);}catch(e){data={error:rawText};}
+    if(data.error){msgEl.style.color='var(--red)';msgEl.textContent='Erreur : '+data.error;return;}
+    msgEl.style.color='var(--gr)';
+    msgEl.textContent='Envoye a '+data.sentTo.join(' et ')+' !';
+  }).catch(function(e){
+    msgEl.style.color='var(--red)';
+    msgEl.textContent='Erreur reseau : '+e.message;
+  });
 }
 
 function reset(){
   if(confirm('Effacer toutes les observations de la semaine ?')){
     obs=[];locked={};
     saveAll();
-    document.getElementById('copy-zone').style.display='none';
+    document.getElementById('review-zone').style.display='none';
+    document.getElementById('genbtn').style.display='block';
     drawToday();updVZ();
   }
 }
@@ -336,6 +452,8 @@ function delM(i){mags.splice(i,1);saveAll();fillSel('sel-mag',mags);drawML();}
 function addTh(){var v=document.getElementById('nt').value.trim();if(!v||themes.indexOf(v)>=0)return;themes.push(v);document.getElementById('nt').value='';saveAll();fillSel('sel-th',themes);drawTHL();}
 function delTH(i){themes.splice(i,1);saveAll();fillSel('sel-th',themes);drawTHL();}
 
+registerServiceWorker();
+checkForUpdate();
 loadAll();
 fillSel('sel-mag',mags);
 fillSel('sel-th',themes);
