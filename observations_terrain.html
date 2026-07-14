@@ -67,6 +67,10 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 #copy-box{width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--s2);border:1px solid var(--b2);border-radius:9px;color:var(--ow);padding:10px;resize:none;}
 .copy-label{font-size:11px;color:var(--mu);margin-bottom:6px;}
 .saved-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr);margin-left:6px;vertical-align:middle;}
+.mic-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;border:none;background:rgba(204,23,25,0.1);color:#CC1719;font-size:14px;cursor:pointer;flex-shrink:0}
+.mic-btn.listening{background:#CC1719;color:#fff;animation:mic-pulse 0.8s ease-in-out infinite}
+@keyframes mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(204,23,25,0.4)}50%{box-shadow:0 0 0 7px rgba(204,23,25,0)}}
+.mic-row{display:flex;align-items:center;gap:8px}
 </style>
 </head>
 <body>
@@ -79,8 +83,9 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 <div class="card">
   <div class="tabs">
     <div class="tab on" id="t0" onclick="go(0)">Saisie</div>
-    <div class="tab" id="t1" onclick="go(1)">Semaine</div>
-    <div class="tab" id="t2" onclick="go(2)">Reglages</div>
+    <div class="tab" id="t1" onclick="go(1)">Info generale</div>
+    <div class="tab" id="t2" onclick="go(2)">Semaine</div>
+    <div class="tab" id="t3" onclick="go(3)">Reglages</div>
   </div>
 
   <div class="pnl on" id="p0">
@@ -90,6 +95,10 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
       <div class="g2">
         <select id="sel-mag"><option value="">Magasin...</option></select>
         <select id="sel-th"><option value="">Theme...</option></select>
+      </div>
+      <div class="mic-row">
+        <label style="font-size:12px;color:var(--mu);flex:1">Observation</label>
+        <button type="button" class="mic-btn" onclick="startMicFor('txt')" title="Dicter">🎤</button>
       </div>
       <textarea id="txt" placeholder="Ce que tu as vu, entendu, constate..."></textarea>
       <div class="togs">
@@ -107,6 +116,19 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
   </div>
 
   <div class="pnl" id="p1">
+    <div class="lbl">Info generale</div>
+    <div class="ginfo">Pour des infos plus larges que ce que tu vois en magasin (contexte reseau, remontees terrain generales, tendances...)</div>
+    <div class="mic-row">
+      <label style="font-size:12px;color:var(--mu);flex:1">Info generale</label>
+      <button type="button" class="mic-btn" onclick="startMicFor('gtxt')" title="Dicter">🎤</button>
+    </div>
+    <textarea id="gtxt" placeholder="Info generale de la semaine, hors observations magasin par magasin..."></textarea>
+    <button class="btn btn-r" onclick="addGeneral()">Ajouter</button>
+    <div class="lbl" style="margin-top:14px">Cette semaine</div>
+    <div id="glist"><div class="empty">Aucune info generale cette semaine</div></div>
+  </div>
+
+  <div class="pnl" id="p2">
     <div class="lbl">Recap semaine</div>
     <div id="wsum"><div class="empty">Aucune observation cette semaine</div></div>
     <div class="sep"></div>
@@ -133,7 +155,7 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
     <button class="btn btn-mu" onclick="reset()">Nouvelle semaine — effacer tout</button>
   </div>
 
-  <div class="pnl" id="p2">
+  <div class="pnl" id="p3">
     <div class="psec">
       <div class="lbl">Magasins</div>
       <div class="ar">
@@ -160,7 +182,7 @@ var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 var KEY='oc_terrain_v1';
 var RELAY='https://zimbra-relay.oli-baroukh.workers.dev';
 var STORE_TOKEN='OC-bilan-store-2026';
-var APP_VERSION='2026.07.13-2';
+var APP_VERSION='2026.07.14-1';
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -195,7 +217,11 @@ function applyUpdate(){
       }).catch(function(){});
     }
   }).then(function(){
-    window.location.reload();
+    // Rechargement "dur" : URL avec parametre anti-cache pour forcer une vraie
+    // requete reseau (un simple reload() peut resservir une version en cache
+    // systeme sur une PWA installee sur l'ecran d'accueil iOS)
+    var base=window.location.href.split('?')[0].split('#')[0];
+    window.location.href=base+'?_u='+Date.now();
   });
 }
 
@@ -255,12 +281,13 @@ function dl(){var d=new Date();return JOURS[d.getDay()]+' '+d.getDate()+'/'+(d.g
 function isLocked(){return !!locked[dk()];}
 
 function go(i){
-  for(var n=0;n<3;n++){
+  for(var n=0;n<4;n++){
     document.getElementById('t'+n).className='tab'+(n===i?' on':'');
     document.getElementById('p'+n).className='pnl'+(n===i?' on':'');
   }
-  if(i===1) drawWeek();
-  if(i===2){drawML();drawTHL();}
+  if(i===1) drawGeneralList();
+  if(i===2) drawWeek();
+  if(i===3){drawML();drawTHL();}
 }
 
 function fillSel(id,items){
@@ -318,8 +345,122 @@ function del(id){
   saveAll();drawToday();updVZ();
 }
 
+// ── DICTEE VOCALE ──
+var micRecognition=null;
+var micActive=false;
+
+function stopMic(){
+  if(micRecognition){try{micRecognition.stop();}catch(e){}}
+  micActive=false;
+  var btns=document.querySelectorAll('.mic-btn.listening');
+  for(var i=0;i<btns.length;i++){btns[i].className='mic-btn';}
+}
+
+function startMicFor(fieldId){
+  var btn=document.querySelector('[onclick="startMicFor(\''+fieldId+'\')"]');
+  if(micActive){
+    var wasThisField=btn&&btn.className.indexOf('listening')>=0;
+    stopMic();
+    if(wasThisField)return;
+  }
+
+  var SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SpeechRecognition){alert('Dictee vocale non supportee sur ce navigateur');return;}
+
+  var field=document.getElementById(fieldId);
+  if(!field)return;
+  field.focus();
+
+  micRecognition=new SpeechRecognition();
+  micRecognition.lang='fr-FR';
+  micRecognition.continuous=false;
+  micRecognition.interimResults=true;
+  micRecognition.maxAlternatives=1;
+
+  var interimStart=-1;
+  var afterText='';
+
+  micRecognition.onstart=function(){
+    micActive=true;
+    if(btn)btn.className='mic-btn listening';
+  };
+
+  micRecognition.onresult=function(event){
+    var transcript=event.results[0][0].transcript;
+    var isFinal=event.results[0].isFinal;
+
+    if(interimStart===-1){
+      var start=field.selectionStart;
+      var end=field.selectionEnd;
+      interimStart=start;
+      afterText=field.value.slice(end);
+      field.value=field.value.slice(0,start)+transcript+afterText;
+    }else{
+      var before=field.value.slice(0,interimStart);
+      field.value=before+transcript+afterText;
+    }
+
+    if(isFinal){
+      var sep=(afterText&&!/^\s/.test(afterText))?' ':'';
+      var before2=field.value.slice(0,interimStart);
+      field.value=before2+transcript+sep+afterText;
+      var newPos=interimStart+transcript.length+sep.length;
+      field.setSelectionRange(newPos,newPos);
+      interimStart=-1;afterText='';
+    }
+  };
+
+  micRecognition.onerror=function(event){
+    stopMic();
+    if(event.error!=='no-speech'&&event.error!=='aborted'){
+      console.warn('Erreur dictee:',event.error);
+    }
+  };
+
+  micRecognition.onend=function(){stopMic();};
+
+  micRecognition.start();
+}
+
+function addGeneral(){
+  var tx=document.getElementById('gtxt').value.trim();
+  if(!tx){alert('Ecris ou dicte une info avant d\'ajouter.');return;}
+  var o={m:'Info generale',th:'Info generale',tx:tx,t:'p',d:dk(),dl:dl(),id:Date.now()};
+  obs.push(o);
+  saveAll();
+  document.getElementById('gtxt').value='';
+  drawGeneralList();
+
+  fetch(RELAY+'/store-observation',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
+    body:JSON.stringify({m:o.m,th:o.th,tx:o.tx,t:o.t,d:isoDate(o.d),dl:o.dl,id:o.id})
+  }).catch(function(e){console.warn('store-observation echouee:',e);});
+}
+
+function delGeneral(id){
+  obs=obs.filter(function(o){return o.id!==id;});
+  saveAll();drawGeneralList();
+}
+
+function drawGeneralList(){
+  var list=obs.filter(function(o){return o.m==='Info generale';});
+  var el=document.getElementById('glist');
+  if(!list.length){el.innerHTML='<div class="empty">Aucune info generale cette semaine</div>';return;}
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var o=list[i];
+    h+='<div class="oc pos">'
+      +'<div class="om">'+o.dl+'</div>'
+      +'<div class="ot">'+o.tx+'</div>'
+      +'<button class="xb" onclick="delGeneral('+o.id+')">&#215;</button>'
+      +'</div>';
+  }
+  el.innerHTML=h;
+}
+
 function drawToday(){
-  var list=obs.filter(function(o){return o.d===dk();});
+  var list=obs.filter(function(o){return o.d===dk() && o.m!=='Info generale';});
   var el=document.getElementById('tlist');
   var lk=isLocked();
   if(!list.length){el.innerHTML='<div class="empty">Aucune observation aujourd\'hui</div>';return;}
