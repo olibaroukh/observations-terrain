@@ -160,7 +160,7 @@ var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 var KEY='oc_terrain_v1';
 var RELAY='https://zimbra-relay.oli-baroukh.workers.dev';
 var STORE_TOKEN='OC-bilan-store-2026';
-var APP_VERSION='2026.07.13-1';
+var APP_VERSION='2026.07.13-2';
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -285,19 +285,31 @@ function updVZ(){
   document.getElementById('vz').style.display=(!lk&&today.length>0)?'block':'none';
 }
 
+function isoDate(dkStr){
+  var p=dkStr.split('-');
+  return p[0]+'-'+(p[1].length<2?'0'+p[1]:p[1])+'-'+(p[2].length<2?'0'+p[2]:p[2]);
+}
+
 function add(){
   if(isLocked())return;
   var m=document.getElementById('sel-mag').value;
   var th=document.getElementById('sel-th').value;
   var tx=document.getElementById('txt').value.trim();
   if(!m||!th||!tx||!tone){alert('Remplis tous les champs et choisis positif ou a ameliorer.');return;}
-  obs.push({m:m,th:th,tx:tx,t:tone,d:dk(),dl:dl(),id:Date.now()});
+  var o={m:m,th:th,tx:tx,t:tone,d:dk(),dl:dl(),id:Date.now()};
+  obs.push(o);
   saveAll();
   document.getElementById('sel-mag').value='';
   document.getElementById('sel-th').value='';
   document.getElementById('txt').value='';
   tone=null;setT(null);
   drawToday();updVZ();
+
+  fetch(RELAY+'/store-observation',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
+    body:JSON.stringify({m:o.m,th:o.th,tx:o.tx,t:o.t,d:isoDate(o.d),dl:o.dl,id:o.id})
+  }).catch(function(e){console.warn('store-observation echouee:',e);});
 }
 
 function del(id){
