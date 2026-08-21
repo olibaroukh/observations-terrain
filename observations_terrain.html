@@ -162,7 +162,7 @@ var STORE_TOKEN='OC-bilan-store-2026';
 var MAGASINS_CSV_URL='https://raw.githubusercontent.com/olibaroukh/bilan-passage/main/magasins.csv';
 var MAGASINS_CACHE_KEY='obs_magasins_cache';
 var AR_FILTER_KEY='obs_current_ar';
-var APP_VERSION='2026.08.21-2';
+var APP_VERSION='2026.08.21-3';
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -559,6 +559,26 @@ function valDay(){
   if(confirm('Valider et figer les '+today.length+' observation'+(today.length>1?'s':'')+' ?')){
     locked[dk()]=true;
     saveAll();drawToday();updVZ();
+
+    // Clôture de journée (22/08) : un mail par magasin visité aujourd'hui,
+    // envoye a Olivier uniquement, en plus du com hebdo automatique du
+    // dimanche. Le contenu du jour (obs, deja en memoire cote client) est
+    // envoye tel quel, jamais reconstitue cote Worker a partir de D1 — ca
+    // evite tout risque de melanger les observations d'un autre AR saisies
+    // le meme jour sur d'autres magasins.
+    var todayMagasins=today.filter(function(o){return o.m!=='Info generale';});
+    if(todayMagasins.length){
+      fetch(RELAY+'/obs-day-close',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
+        body:JSON.stringify({
+          ar:currentAR||'',
+          date:isoDate(dk()),
+          dateLabel:dl(),
+          items:todayMagasins.map(function(o){return {m:o.m,th:o.th,tx:o.tx,t:o.t};})
+        })
+      }).catch(function(e){console.warn('obs-day-close echouee:',e);});
+    }
   }
 }
 
