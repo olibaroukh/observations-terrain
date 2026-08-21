@@ -63,9 +63,6 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
 .psec{margin-bottom:18px;}
 .note{font-size:11px;color:var(--mu);text-align:center;margin-top:10px;}
 .ginfo{font-size:11px;color:var(--mu);text-align:center;margin-bottom:10px;line-height:1.5;}
-#review-zone{margin-top:14px;}
-#copy-box{width:100%;height:160px;font-family:monospace;font-size:11px;background:var(--s2);border:1px solid var(--b2);border-radius:9px;color:var(--ow);padding:10px;resize:none;}
-.copy-label{font-size:11px;color:var(--mu);margin-bottom:6px;}
 .saved-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gr);margin-left:6px;vertical-align:middle;}
 .mic-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;border:none;background:rgba(204,23,25,0.1);color:#CC1719;font-size:14px;cursor:pointer;flex-shrink:0}
 .mic-btn.listening{background:#CC1719;color:#fff;animation:mic-pulse 0.8s ease-in-out infinite}
@@ -133,25 +130,7 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
     <div class="lbl">Recap semaine</div>
     <div id="wsum"><div class="empty">Aucune observation cette semaine</div></div>
     <div class="sep"></div>
-    <div class="ginfo">Genere la com de la semaine, tu pourras la relire et ajouter des infos avant l'envoi</div>
-    <button class="btn btn-o" id="genbtn" onclick="gen()">Preparer la communication</button>
-    <div id="loadzone" style="display:none;text-align:center;font-size:12px;color:var(--mu);padding:14px 0">Generation en cours...</div>
-    <div id="review-zone" style="display:none">
-      <div class="copy-label">Slack 1</div>
-      <textarea id="rv-slack1" style="height:100px"></textarea>
-      <div class="copy-label">Slack 2</div>
-      <textarea id="rv-slack2" style="height:100px"></textarea>
-      <div class="copy-label">Slack 3</div>
-      <textarea id="rv-slack3" style="height:100px"></textarea>
-      <div class="copy-label">Message general</div>
-      <textarea id="rv-general" style="height:100px"></textarea>
-      <div class="copy-label">Elements pour le mail</div>
-      <textarea id="rv-mail" style="height:100px"></textarea>
-      <div class="copy-label">Infos supplementaires (chiffres, ton, contexte...)</div>
-      <textarea id="rv-infos" style="height:80px" placeholder="A completer avant l'envoi..."></textarea>
-      <button class="btn btn-r" style="margin-top:8px" onclick="sendObs()">Envoyer par email</button>
-      <div id="sendmsg" style="display:none;font-size:12px;text-align:center;margin-top:8px"></div>
-    </div>
+    <div class="ginfo">La communication hebdo (Slack + mail) part automatiquement chaque dimanche a partir de ces observations, avec le reste du reseau (bilans de passage, PEDLV, Kaizen).</div>
     <div class="sep"></div>
     <button class="btn btn-mu" onclick="reset()">Nouvelle semaine — effacer tout</button>
   </div>
@@ -183,7 +162,7 @@ var STORE_TOKEN='OC-bilan-store-2026';
 var MAGASINS_CSV_URL='https://raw.githubusercontent.com/olibaroukh/bilan-passage/main/magasins.csv';
 var MAGASINS_CACHE_KEY='obs_magasins_cache';
 var AR_FILTER_KEY='obs_current_ar';
-var APP_VERSION='2026.08.21-1';
+var APP_VERSION='2026.08.21-2';
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -612,78 +591,16 @@ function drawWeek(){
   el.innerHTML=h;
 }
 
-function gen(){
-  if(!obs.length){alert('Aucune observation a envoyer.');return;}
-  document.getElementById('genbtn').style.display='none';
-  document.getElementById('loadzone').style.display='block';
-  document.getElementById('review-zone').style.display='none';
-  document.getElementById('sendmsg').style.display='none';
-
-  fetch(RELAY+'/obs-generate',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
-    body:JSON.stringify({obs:obs})
-  }).then(function(r){return r.text();}).then(function(rawText){
-    var data;
-    try{data=JSON.parse(rawText);}catch(e){data={error:rawText};}
-    document.getElementById('loadzone').style.display='none';
-    document.getElementById('genbtn').style.display='block';
-    if(data.error){alert('Erreur : '+data.error);return;}
-    var b=data.blocks;
-    document.getElementById('rv-slack1').value=(b.slack1&&b.slack1.titre?b.slack1.titre+'\n\n':'')+(b.slack1&&b.slack1.contenu?b.slack1.contenu+'\n\n':'')+(b.slack1&&b.slack1.conclusion?b.slack1.conclusion:'');
-    document.getElementById('rv-slack2').value=(b.slack2&&b.slack2.titre?b.slack2.titre+'\n\n':'')+(b.slack2&&b.slack2.contenu?b.slack2.contenu+'\n\n':'')+(b.slack2&&b.slack2.conclusion?b.slack2.conclusion:'');
-    document.getElementById('rv-slack3').value=(b.slack3&&b.slack3.titre?b.slack3.titre+'\n\n':'')+(b.slack3&&b.slack3.contenu?b.slack3.contenu+'\n\n':'')+(b.slack3&&b.slack3.conclusion?b.slack3.conclusion:'');
-    document.getElementById('rv-general').value=b.message_general||'';
-    document.getElementById('rv-mail').value=b.elements_mail||'';
-    document.getElementById('rv-infos').value='';
-    document.getElementById('review-zone').style.display='block';
-  }).catch(function(e){
-    document.getElementById('loadzone').style.display='none';
-    document.getElementById('genbtn').style.display='block';
-    alert('Erreur reseau : '+e.message);
-  });
-}
-
-function sendObs(){
-  var payload={
-    slack1:document.getElementById('rv-slack1').value,
-    slack2:document.getElementById('rv-slack2').value,
-    slack3:document.getElementById('rv-slack3').value,
-    messageGeneral:document.getElementById('rv-general').value,
-    elementsMail:document.getElementById('rv-mail').value,
-    infosSupplementaires:document.getElementById('rv-infos').value,
-    // AR courant (filtre ecran Saisie) : sert au Worker a router le mail vers
-    // l'animateur concerne + Olivier, au lieu du destinataire fixe d'avant le
-    // 21/08 (Vanessa). Vide ou "__ALL__" => envoi a Olivier seul.
-    ar:currentAR
-  };
-  var msgEl=document.getElementById('sendmsg');
-  msgEl.style.display='block';
-  msgEl.style.color='var(--mu)';
-  msgEl.textContent='Envoi en cours...';
-
-  fetch(RELAY+'/obs-send',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-Store-Token':STORE_TOKEN},
-    body:JSON.stringify(payload)
-  }).then(function(r){return r.text();}).then(function(rawText){
-    var data;
-    try{data=JSON.parse(rawText);}catch(e){data={error:rawText};}
-    if(data.error){msgEl.style.color='var(--red)';msgEl.textContent='Erreur : '+data.error;return;}
-    msgEl.style.color='var(--gr)';
-    msgEl.textContent='Envoye a '+data.sentTo.join(' et ')+' !';
-  }).catch(function(e){
-    msgEl.style.color='var(--red)';
-    msgEl.textContent='Erreur reseau : '+e.message;
-  });
-}
+// gen()/sendObs() retires le 21/08 : la communication hebdo (Slack + mail) part
+// desormais automatiquement chaque dimanche cote Worker, a partir des memes
+// observations (voir generateComHebdo cote worker.js) — ce bouton manuel etait
+// devenu redondant. L'onglet Semaine garde uniquement le recap de lecture et le
+// bouton d'effacement ci-dessous.
 
 function reset(){
   if(confirm('Effacer toutes les observations de la semaine ?')){
     obs=[];locked={};
     saveAll();
-    document.getElementById('review-zone').style.display='none';
-    document.getElementById('genbtn').style.display='block';
     drawToday();updVZ();
   }
 }
