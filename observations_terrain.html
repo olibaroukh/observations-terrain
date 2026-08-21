@@ -92,6 +92,7 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
     <div id="lkmsg" class="lkmsg" style="display:none">Journee validee — observations figees</div>
     <div id="fz">
       <div class="lbl">Nouvelle observation</div>
+      <select id="sel-ar" style="margin-bottom:8px" onchange="onARChange()"><option value="">Animateur...</option></select>
       <div class="g2">
         <select id="sel-mag"><option value="">Magasin...</option></select>
         <select id="sel-th"><option value="">Theme...</option></select>
@@ -158,11 +159,8 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
   <div class="pnl" id="p3">
     <div class="psec">
       <div class="lbl">Magasins</div>
-      <div class="ar">
-        <input type="text" id="nm" placeholder="Nom du magasin...">
-        <button onclick="addM()">Ajouter</button>
-      </div>
-      <div id="ml"></div>
+      <div class="ginfo">La liste des magasins vient du referentiel reseau (magasins.csv), filtree par l'animateur choisi dans l'onglet Saisie.</div>
+      <button class="btn btn-o" onclick="reloadMagasins()">🔄 Recharger le referentiel magasins</button>
     </div>
     <div class="sep"></div>
     <div class="psec">
@@ -182,7 +180,10 @@ var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 var KEY='oc_terrain_v1';
 var RELAY='https://zimbra-relay.oli-baroukh.workers.dev';
 var STORE_TOKEN='OC-bilan-store-2026';
-var APP_VERSION='2026.07.14-1';
+var MAGASINS_CSV_URL='https://raw.githubusercontent.com/olibaroukh/bilan-passage/main/magasins.csv';
+var MAGASINS_CACHE_KEY='obs_magasins_cache';
+var AR_FILTER_KEY='obs_current_ar';
+var APP_VERSION='2026.08.21-1';
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -241,14 +242,23 @@ function registerServiceWorker(){
   }
 }
 
-var DEFAULT_MAGS=['Montgeron','Vitry','Quincy','Fresnes'];
+// Referentiel magasins.csv reseau (code/libelle/animateur/animateurEmail), remplace
+// depuis le 21/08 l'ancienne liste de magasins geree a la main (limitee aux 4
+// magasins de Vanessa). Fallback minimal si le premier chargement se fait hors
+// reseau, avant que le cache local existe.
+var DEFAULT_MAGASINS=[
+  {code:"MGT",libelle:"Montgeron",animateur:"",animateurEmail:""},
+  {code:"VIT",libelle:"Vitry-sur-Seine",animateur:"",animateurEmail:""},
+  {code:"QUI",libelle:"Quincy-sous-Senart",animateur:"",animateurEmail:""},
+  {code:"FRE",libelle:"Fresnes",animateur:"",animateurEmail:""}
+];
 var DEFAULT_THEMES=['Accueil client','Facing montures','Depistage audio','Rappels devis','Ventes NDV','Formations','Proprete rangement','Organisation equipe'];
 
-var mags, themes, obs, locked, tone;
+var magasins=[], currentAR='', themes, obs, locked, tone;
 
 function saveAll(){
   try{
-    localStorage.setItem(KEY, JSON.stringify({mags:mags,themes:themes,obs:obs,locked:locked}));
+    localStorage.setItem(KEY, JSON.stringify({themes:themes,obs:obs,locked:locked}));
   }catch(e){}
 }
 
@@ -257,23 +267,111 @@ function loadAll(){
     var raw=localStorage.getItem(KEY);
     if(raw){
       var d=JSON.parse(raw);
-      mags=d.mags||DEFAULT_MAGS;
       themes=d.themes||DEFAULT_THEMES;
       obs=d.obs||[];
       locked=d.locked||{};
     } else {
-      mags=DEFAULT_MAGS.slice();
       themes=DEFAULT_THEMES.slice();
       obs=[];
       locked={};
     }
   }catch(e){
-    mags=DEFAULT_MAGS.slice();
     themes=DEFAULT_THEMES.slice();
     obs=[];
     locked={};
   }
   tone=null;
+}
+
+// Charge magasins.csv (referentiel reseau partage avec Bilan de Passage et
+// Pour etre dans le vert). Cache local en repli si hors reseau, puis liste de
+// demonstration en tout dernier recours (voir DEFAULT_MAGASINS).
+function parseMagasinsCSV(text){
+  var lines=text.split(/\r?\n/).filter(Boolean);
+  if(!lines.length) return [];
+  var header=lines[0].split(';').map(function(h){return h.trim();});
+  var idxCode=header.indexOf('code');
+  var idxLibelle=header.indexOf('libelle');
+  var idxAnimateur=header.indexOf('animateur');
+  var idxEmail=header.indexOf('animateur_email');
+  var rows=[];
+  for(var i=1;i<lines.length;i++){
+    var cols=lines[i].split(';');
+    var code=(cols[idxCode]||'').trim();
+    if(!code) continue;
+    rows.push({
+      code:code,
+      libelle:idxLibelle>=0?(cols[idxLibelle]||'').trim():'',
+      animateur:idxAnimateur>=0?(cols[idxAnimateur]||'').trim():'',
+      animateurEmail:idxEmail>=0?(cols[idxEmail]||'').trim():''
+    });
+  }
+  return rows;
+}
+
+function loadMagasins(){
+  var doFetch=fetch(MAGASINS_CSV_URL+'?v='+Date.now()).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  }).then(function(text){
+    var rows=parseMagasinsCSV(text);
+    if(rows.length){
+      magasins=rows;
+      try{ localStorage.setItem(MAGASINS_CACHE_KEY, JSON.stringify(rows)); }catch(e){}
+    }
+  }).catch(function(e){ console.warn('Chargement magasins.csv:', e); });
+
+  return doFetch.then(function(){
+    if(!magasins.length){
+      try{ magasins=JSON.parse(localStorage.getItem(MAGASINS_CACHE_KEY)||'[]'); }catch(e){}
+    }
+    if(!magasins.length){ magasins=DEFAULT_MAGASINS.slice(); }
+    populateARSelect();
+  });
+}
+
+function reloadMagasins(){
+  magasins=[];
+  loadMagasins().then(function(){
+    alert('Referentiel magasins recharge — '+magasins.length+' magasins.');
+  });
+}
+
+function getARList(){
+  var ars=[];
+  magasins.forEach(function(m){ if(m.animateur && ars.indexOf(m.animateur)<0) ars.push(m.animateur); });
+  ars.sort();
+  return ars;
+}
+
+function populateARSelect(){
+  var sel=document.getElementById('sel-ar');
+  var h='<option value="">Animateur...</option><option value="__ALL__">Tout le reseau</option>';
+  getARList().forEach(function(ar){ h+='<option value="'+ar.replace(/"/g,'&quot;')+'">'+ar+'</option>'; });
+  sel.innerHTML=h;
+  var saved='';
+  try{ saved=localStorage.getItem(AR_FILTER_KEY)||''; }catch(e){}
+  if(saved && (saved==='__ALL__' || getARList().indexOf(saved)>=0)){
+    sel.value=saved;
+    currentAR=saved;
+  }
+  fillMagSel();
+}
+
+function onARChange(){
+  currentAR=document.getElementById('sel-ar').value;
+  try{ localStorage.setItem(AR_FILTER_KEY, currentAR); }catch(e){}
+  fillMagSel();
+}
+
+function fillMagSel(){
+  var list=(!currentAR || currentAR==='__ALL__') ? magasins : magasins.filter(function(m){return m.animateur===currentAR;});
+  list=list.slice().sort(function(a,b){return a.libelle.localeCompare(b.libelle);});
+  var s=document.getElementById('sel-mag');
+  var c=s.value;
+  var h='<option value="">Magasin...</option>';
+  list.forEach(function(m){ h+='<option'+(m.libelle===c?' selected':'')+'>'+m.libelle+'</option>'; });
+  s.innerHTML=h;
 }
 
 function dk(){var d=new Date();return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();}
@@ -287,7 +385,7 @@ function go(i){
   }
   if(i===1) drawGeneralList();
   if(i===2) drawWeek();
-  if(i===3){drawML();drawTHL();}
+  if(i===3){drawTHL();}
 }
 
 function fillSel(id,items){
@@ -553,7 +651,11 @@ function sendObs(){
     slack3:document.getElementById('rv-slack3').value,
     messageGeneral:document.getElementById('rv-general').value,
     elementsMail:document.getElementById('rv-mail').value,
-    infosSupplementaires:document.getElementById('rv-infos').value
+    infosSupplementaires:document.getElementById('rv-infos').value,
+    // AR courant (filtre ecran Saisie) : sert au Worker a router le mail vers
+    // l'animateur concerne + Olivier, au lieu du destinataire fixe d'avant le
+    // 21/08 (Vanessa). Vide ou "__ALL__" => envoi a Olivier seul.
+    ar:currentAR
   };
   var msgEl=document.getElementById('sendmsg');
   msgEl.style.display='block';
@@ -586,13 +688,6 @@ function reset(){
   }
 }
 
-function drawML(){
-  var el=document.getElementById('ml');
-  if(!mags.length){el.innerHTML='<div class="empty">Aucun magasin</div>';return;}
-  var h='';
-  for(var i=0;i<mags.length;i++) h+='<div class="pi"><span>'+mags[i]+'</span><button class="xb" style="position:relative;top:auto;right:auto;padding:4px;" onclick="delM('+i+')">&#215;</button></div>';
-  el.innerHTML=h;
-}
 function drawTHL(){
   var el=document.getElementById('thl');
   if(!themes.length){el.innerHTML='<div class="empty">Aucun theme</div>';return;}
@@ -600,16 +695,14 @@ function drawTHL(){
   for(var i=0;i<themes.length;i++) h+='<div class="pi"><span>'+themes[i]+'</span><button class="xb" style="position:relative;top:auto;right:auto;padding:4px;" onclick="delTH('+i+')">&#215;</button></div>';
   el.innerHTML=h;
 }
-function addM(){var v=document.getElementById('nm').value.trim();if(!v||mags.indexOf(v)>=0)return;mags.push(v);document.getElementById('nm').value='';saveAll();fillSel('sel-mag',mags);drawML();}
-function delM(i){mags.splice(i,1);saveAll();fillSel('sel-mag',mags);drawML();}
 function addTh(){var v=document.getElementById('nt').value.trim();if(!v||themes.indexOf(v)>=0)return;themes.push(v);document.getElementById('nt').value='';saveAll();fillSel('sel-th',themes);drawTHL();}
 function delTH(i){themes.splice(i,1);saveAll();fillSel('sel-th',themes);drawTHL();}
 
 registerServiceWorker();
 checkForUpdate();
 loadAll();
-fillSel('sel-mag',mags);
 fillSel('sel-th',themes);
+loadMagasins();
 drawToday();
 updVZ();
 </script>
