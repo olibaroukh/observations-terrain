@@ -75,6 +75,17 @@ input[type=text]::placeholder,textarea::placeholder{color:var(--mu);}
   <span style="flex:1;color:#F0EDE6;font-size:13px">🔄 Nouvelle version de l'application disponible</span>
   <button onclick="applyUpdate()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;font-family:'Barlow',sans-serif;cursor:pointer;white-space:nowrap">Mettre à jour</button>
 </div>
+<div id="version-lock" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(13,13,13,0.97);align-items:center;justify-content:center;font-family:'Barlow',sans-serif;padding:24px">
+  <div style="max-width:420px;text-align:center;background:#0D0D0D;border:2px solid var(--red);border-radius:16px;padding:32px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+    <div style="font-size:40px;margin-bottom:12px">🔒</div>
+    <div style="color:#F0EDE6;font-size:18px;font-weight:700;margin-bottom:10px">Application obsolète</div>
+    <div style="color:#F0EDE6;font-size:14px;opacity:0.85;line-height:1.5;margin-bottom:22px">
+      Ce poste utilise une ancienne version de l'application.<br>
+      Elle n'est plus utilisable en l'état — merci de mettre à jour pour continuer.
+    </div>
+    <button onclick="applyUpdate()" id="version-lock-btn" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:12px 28px;font-size:15px;font-weight:700;font-family:'Barlow',sans-serif;cursor:pointer">Mettre à jour maintenant</button>
+  </div>
+</div>
 <h1>Observations <span>Terrain</span></h1>
 <p class="sub">Saisie des visites magasins</p>
 <div class="card">
@@ -162,7 +173,9 @@ var STORE_TOKEN='OC-bilan-store-2026';
 var MAGASINS_CSV_URL='https://raw.githubusercontent.com/olibaroukh/bilan-passage/main/magasins.csv';
 var MAGASINS_CACHE_KEY='obs_magasins_cache';
 var AR_FILTER_KEY='obs_current_ar';
-var APP_VERSION='2026.08.21-3';
+var APP_VERSION='2026.09.19-1';//a bumper avec SW_VERSION (sw.js) ET version.json a chaque deploiement
+
+var VERSION_CHECK_INTERVAL_MS=3*60*1000;
 
 function checkForUpdate(){
   var updatePending=localStorage.getItem('obs_update_pending');
@@ -179,8 +192,29 @@ function checkForUpdate(){
   }
 }
 
+function lockAppForUpdate(){
+  var lock=document.getElementById('version-lock');
+  if(lock)lock.style.display='flex';
+  var banner=document.getElementById('update-banner');
+  if(banner)banner.style.display='none';
+}
+
+function checkLatestVersionOnServer(){
+  fetch('version.json?_='+Date.now(),{cache:'no-store'}).then(function(res){
+    if(!res.ok)return;
+    return res.json();
+  }).then(function(data){
+    if(data&&data.version&&data.version!==APP_VERSION){
+      lockAppForUpdate();
+    }
+  }).catch(function(){
+    // Pas de reseau ou requete echouee : on ne bloque pas, nouvelle tentative
+    // au prochain cycle.
+  });
+}
+
 function applyUpdate(){
-  var btn=document.querySelector('#update-banner button');
+  var btn=document.getElementById('version-lock-btn')||document.querySelector('#update-banner button');
   if(btn){btn.textContent='Mise a jour...';btn.disabled=true;}
   localStorage.setItem('obs_update_pending','1');
 
@@ -637,6 +671,11 @@ function delTH(i){themes.splice(i,1);saveAll();fillSel('sel-th',themes);drawTHL(
 
 registerServiceWorker();
 checkForUpdate();
+checkLatestVersionOnServer();
+setInterval(checkLatestVersionOnServer,VERSION_CHECK_INTERVAL_MS);
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible')checkLatestVersionOnServer();
+});
 loadAll();
 fillSel('sel-th',themes);
 loadMagasins();
