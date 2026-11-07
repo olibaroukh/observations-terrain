@@ -167,6 +167,32 @@ select,input,textarea,button{font-family:inherit}
 </div>
 
 <script>
+// 07/11/2026 : fermeture de la clé partagée — chaque appel à zimbra-relay porte la session du poste (code PIN du magasin,
+// poste animateur ou connexion AR, enregistrés sur ce navigateur par PEDLV / Suivi magasin / Kaizen / bilan-passage).
+(function () {
+  var f0 = window.fetch.bind(window);
+  var lire = function (k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+  window.fetch = function (u, o) {
+    try {
+      var url = String(u && u.url ? u.url : u);
+      if (/zimbra-relay/.test(url)) {
+        o = Object.assign({}, o || {}); var h = new Headers(o.headers || {});
+        var mg = lire('oc_magasin_session'), an = lire('oc_animateur_session'), ar = lire('bilan_ar_session');
+        if (mg && mg.token && !h.get('X-Magasin-Session')) h.set('X-Magasin-Session', mg.token);
+        if (an && an.token && an.exp > Date.now() && !h.get('X-Animateur-Session')) h.set('X-Animateur-Session', an.token);
+        if (ar && ar.token && ar.exp > Date.now() && !h.get('X-AR-Session')) h.set('X-AR-Session', ar.token);
+        o.headers = h;
+        return f0(u, o).then(function (r) {
+          if (r.status === 401) r.clone().json().then(function (j) { if (j && j.code === 'POSTE_REQUIS') alert('Ce poste n’est pas enregistré. Ouvrez « Pour être dans le vert » ou « Suivi magasin » et saisissez le code PIN du magasin (ou connectez-vous en animateur), puis revenez ici.'); }).catch(function () {});
+          return r;
+        });
+      }
+    } catch (e) { /* appel inchangé */ }
+    return f0(u, o);
+  };
+})();
+</script>
+<script>
 var JOURS=['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
 var KEY='oc_terrain_v1';
 var RELAY='https://zimbra-relay.oli-baroukh.workers.dev';
@@ -174,7 +200,7 @@ var STORE_TOKEN='OC-bilan-store-2026';
 var MAGASINS_CSV_URL='https://zimbra-relay.oli-baroukh.workers.dev/referentiel/magasins.csv';
 var MAGASINS_CACHE_KEY='obs_magasins_cache';
 var AR_FILTER_KEY='obs_current_ar';
-var APP_VERSION='2026.11.05-1';//a bumper avec SW_VERSION (sw.js) ET version.json a chaque deploiement
+var APP_VERSION='2026.11.07-1';//a bumper avec SW_VERSION (sw.js) ET version.json a chaque deploiement
 
 var VERSION_CHECK_INTERVAL_MS=3*60*1000;
 
